@@ -7,14 +7,40 @@ import os
 
 def compare_models(seeds, model_list, prompt, height, width, steps, scale):
     import torch
+    import transformers
     from diffusers import StableDiffusionPipeline, DDIMScheduler
+    from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
     from diffusers.utils.import_utils import is_xformers_available
+
+    StableDiffusionSafetyChecker.forward = lambda self, clip_input, images: (images, False)
+    transformers.logging.set_verbosity_error()
+
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')
+        generator_device = torch.device('cpu')
+    elif torch.cuda.is_available():
+        device = generator_device = torch.device('cuda')
+    else:
+        device = generator_device = torch.device('cpu')
+    print(f"Use device: {device}")
 
     print(f"Prompt: {prompt}")
     results = {}
     for model in model_list:
         print(f"Model: {model}")
-        pipe = StableDiffusionPipeline.from_pretrained(model, requires_safety_checker=False, torch_dtype=torch.float16).to("cuda")
+        if os.path.isfile(model):
+            from diffusers.pipelines.stable_diffusion.convert_from_ckpt import load_pipeline_from_original_stable_diffusion_ckpt
+            pipe = load_pipeline_from_original_stable_diffusion_ckpt(
+                model,
+                from_safetensors=model.endswith('safetensors'),
+            )
+        else:
+            pipe = StableDiffusionPipeline.from_pretrained(
+                model,
+                requires_safety_checker=False,
+                torch_dtype=torch.float16,
+            )
+        pipe.to(device)
         pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
         if is_xformers_available():
             pipe.enable_xformers_memory_efficient_attention()
@@ -22,8 +48,18 @@ def compare_models(seeds, model_list, prompt, height, width, steps, scale):
             print(f"Seed: {seed}")
             if seed not in results:
                 results[seed] = {}
-            generator = torch.Generator(device='cuda').manual_seed(int(seed))
-            with torch.autocast("cuda"), torch.inference_mode():
+            generator = torch.Generator(device=generator_device).manual_seed(int(seed))
+            if device.type == 'cuda':
+                with torch.autocast('cuda'), torch.inference_mode():
+                    results[seed][model] = pipe(
+                            prompt,
+                            height=height, width=width,
+                            num_images_per_prompt=1,
+                            num_inference_steps=steps,
+                            guidance_scale=scale,
+                            generator=generator
+                        ).images[0]
+            else:
                 results[seed][model] = pipe(
                         prompt,
                         height=height, width=width,
