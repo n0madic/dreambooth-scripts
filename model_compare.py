@@ -28,18 +28,23 @@ def compare_models(seeds, model_list, prompt, height, width, steps, scale):
     results = {}
     for model in model_list:
         print(f"Model: {model}")
-        if os.path.isfile(model):
-            from diffusers.pipelines.stable_diffusion.convert_from_ckpt import load_pipeline_from_original_stable_diffusion_ckpt
-            pipe = load_pipeline_from_original_stable_diffusion_ckpt(
-                model,
-                from_safetensors=model.endswith('safetensors'),
-            )
-        else:
-            pipe = StableDiffusionPipeline.from_pretrained(
-                model,
-                requires_safety_checker=False,
-                torch_dtype=torch.float16,
-            )
+        try:
+            if os.path.isfile(model):
+                from diffusers.pipelines.stable_diffusion.convert_from_ckpt import load_pipeline_from_original_stable_diffusion_ckpt
+                pipe = load_pipeline_from_original_stable_diffusion_ckpt(
+                    model,
+                    from_safetensors=model.endswith('safetensors'),
+                )
+            else:
+                pipe = StableDiffusionPipeline.from_pretrained(
+                    model,
+                    requires_safety_checker=False,
+                    torch_dtype=torch.float16,
+                )
+        except Exception as e:
+            print(e)
+            print(f"Failed to load model: {model}")
+            continue
         pipe.to(device)
         pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
         if is_xformers_available():
@@ -71,25 +76,25 @@ def compare_models(seeds, model_list, prompt, height, width, steps, scale):
     return results
 
 
-def save_grid(results, seeds, models, output_file):
+def save_grid(results, output_file):
     import matplotlib.pyplot as plt
 
-    row = len(seeds)
-    col = len(models)
+    row = len(results.keys())
+    col = len(results[next(iter(results))])
     scale = 4
     fig, axes = plt.subplots(row, col, figsize=(col*scale, row*scale), gridspec_kw={'hspace': 0, 'wspace': 0})
-    for i, seed in enumerate(seeds):
-        for j, model in enumerate(models):
+    for i, (seed, models) in enumerate(results.items()):
+        for j, (name, model) in enumerate(models.items()):
             if row == 1:
                 currAxes = axes[j]
             else:
                 currAxes = axes[i, j]
             if i == 0:
-                basename = os.path.basename(model)
+                basename = os.path.basename(name)
                 currAxes.set_title(basename)
             if j == 0:
                 currAxes.text(-0.2, 0.5, seed, rotation=0, va='center', ha='center', transform=currAxes.transAxes)
-            currAxes.imshow(results[seed][model], cmap='gray')
+            currAxes.imshow(model, cmap='gray')
             currAxes.axis('off')
     plt.tight_layout()
     plt.savefig(output_file)
@@ -125,4 +130,7 @@ if __name__ == '__main__':
     results = compare_models(seeds, args.models, args.prompt,
                              args.height, args.width,
                              args.steps, args.scale)
-    save_grid(results, seeds, args.models, args.output)
+    if len(results):
+        save_grid(results, args.output)
+    else:
+        print("No results to save")
