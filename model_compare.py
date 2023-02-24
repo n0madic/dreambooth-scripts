@@ -121,6 +121,8 @@ if __name__ == '__main__':
                         help='guidance scale (default: 7.5)')
     parser.add_argument('--output', type=str, default="model_compare.png",
                         help='output file name')
+    parser.add_argument('--open', action='store_true',
+                        help='open the output file (default: False)')
 
     args = parser.parse_args()
 
@@ -134,3 +136,7 @@ if __name__ == '__main__':
         save_grid(results, args.output)
     else:
         print("No results to save")
+
+    if args.open:
+        import subprocess
+        subprocess.run(["open", args.output])
